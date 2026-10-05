@@ -4,6 +4,7 @@ import type { User } from "firebase/auth";
 import { Film,Plus,Upload,Pencil,Eye,EyeOff,Trash2,LogOut,RefreshCw,ShieldCheck,BarChart3,Check,X } from "lucide-react";
 import { Brand,SiteFooter } from "@/components/brand";
 import { ADMIN_EMAIL, PUBLIC_SITE_URL } from "@/lib/config";
+import { readApiResponse } from "@/lib/api-response";
 import { driveIdFromLink,movieInput } from "@/lib/validation";
 import type { Movie,Stats } from "@/lib/types";
 import { compressPoster,uploadPoster } from "@/lib/drive";
@@ -29,7 +30,7 @@ export default function Admin(){
   const request=useCallback(async(path:string,options:RequestInit={},account?:User)=>{
     const current=account||user;if(!current)throw new Error("Sign in again to continue.");
     const response=await fetch(path,{...options,headers:{"Content-Type":"application/json",Authorization:`Bearer ${await current.getIdToken()}`,...options.headers}});
-    const data=await response.json() as {error?:string;movies:Movie[]}&Stats;if(!response.ok)throw new Error(data.error||"Request failed.");return data;
+    return readApiResponse<{movies:Movie[]}&Stats>(response);
   },[user]);
   const load=useCallback(async(account:User)=>{
     setError("");try{const data=await request("/api/movies?admin=1",{},account);setMovies(data.movies);setAuthorized(true);setStats(await request("/api/stats",{},account));}catch(e){setError(authError(e));}

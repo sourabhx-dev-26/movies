@@ -5,8 +5,9 @@
   "installCommand": "npm ci",
   "outputDirectory": "dist/public",
   "functions": {
-    "api/entry.ts": {
-      "maxDuration": 30
+    "api/entry.js": {
+      "maxDuration": 30,
+      "includeFiles": "dist/server.mjs"
     }
   },
   "rewrites": [
@@ -31,4 +32,3 @@
     }
   ]
 }
-

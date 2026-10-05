@@ -8,12 +8,16 @@ import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import { MemoryFirestore } from "./test-firestore.mjs";
 
 const directory=path.resolve(".local/checks");mkdirSync(directory,{recursive:true});
-for(const name of ["config","validation","server-auth","firestore-store"]){
+for(const name of ["config","validation","server-auth","firestore-store","api-response"]){
   const source=readFileSync("lib/"+name+".ts","utf8");
   const output=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace(/from "\.\/(config|types|validation|server-auth)"/g,'from "./$1.mjs"').replace(/^import siteConfig from .*;$/m,"const siteConfig="+readFileSync("lib/site-config.json","utf8")+";");
   writeFileSync(path.join(directory,name+".mjs"),output);
 }
 const validation=await import(pathToFileURL(path.join(directory,"validation.mjs")));
+const {readApiResponse}=await import(pathToFileURL(path.join(directory,"api-response.mjs")));
+await assert.rejects(()=>readApiResponse(new Response("A server error has occurred",{status:500})),/movie API failed to start/);
+await assert.rejects(()=>readApiResponse(Response.json({error:"Missing credential"},{status:503})),/Missing credential/);
+assert.deepEqual(await readApiResponse(Response.json({movies:[]})),{movies:[]});
 const valid={title:"A film",watchUrl:"https://example.com/watch",driveFileId:"abcdefghijklmno",published:1};
 assert(validation.movieInput.safeParse(valid).success);
 for(const watchUrl of ["javascript:alert(1)","data:text/html,hi","https://user:pass@example.com"])assert(!validation.movieInput.safeParse({...valid,watchUrl}).success);
@@ -120,5 +124,9 @@ try{
     const source=readFileSync("dist/public/"+file,"utf8");
     assert(!source.includes("private_key"));assert(!source.includes("FIREBASE_SERVICE_ACCOUNT_JSON"));assert(!source.includes("firebase-admin"));
   }
-  console.log("PASS: Vercel configuration and browser bundle excludes server credentials");
+  assert.equal(vercel.functions["api/entry.js"].includeFiles,"dist/server.mjs");
+  const {default:entry}=await import(pathToFileURL(path.resolve("api/entry.js")));
+  const startup=await entry.fetch(new Request(base+"/api/movies?admin=1"));
+  assert.equal(startup.status,401);assert.match((await startup.json()).error,/Sign in/);
+  console.log("PASS: real compiled API entry starts under Node, Vercel includes server bundle, JSON/non-JSON error handling and browser excludes server credentials");
 }finally{globalThis.fetch=realFetch;delete globalThis.__TEST_STORE__;}

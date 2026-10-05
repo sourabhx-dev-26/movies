@@ -63,7 +63,7 @@ Create/use two separate Vercel projects connected to the two GitHub repositories
 | Install command | npm ci |
 | Node.js | 24.x |
 
-vercel.json declares the build and API routing. The Node API at api/entry.ts uses Firestore directly; backend source is outside the static output.
+vercel.json declares the build and API routing. The Node API at api/entry.js loads the compiled dist/server.mjs bundle, which is explicitly included in the function. The backend uses Firestore directly and stays outside the static output.
 
 In the admin project, also set MOVIES_PUBLIC_URL to the public HTTPS origin, without a path. This controls the logo and View website links. No cross-site API URL is required: each browser uses its own project's /api routes. Redeploy after changing environment variables.
 
