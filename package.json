@@ -9,6 +9,8 @@
     "install:ci": "node scripts/install-ci.mjs",
     "dev": "node scripts/build-light.mjs && node scripts/preview.mjs",
     "build": "node scripts/build-light.mjs",
+    "build:vercel": "node scripts/build-vercel.mjs",
+    "check:vercel": "node scripts/verify-vercel.mjs",
     "start": "node scripts/preview.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

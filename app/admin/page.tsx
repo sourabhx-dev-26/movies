@@ -3,7 +3,7 @@ import { useCallback,useEffect,useRef,useState } from "react";
 import type { User } from "firebase/auth";
 import { Film,Plus,Upload,Pencil,Eye,EyeOff,Trash2,LogOut,RefreshCw,ShieldCheck,BarChart3,Check,X } from "lucide-react";
 import { Brand,SiteFooter } from "@/components/brand";
-import { ADMIN_EMAIL, PUBLIC_SITE_URL } from "@/lib/config";
+import { ADMIN_EMAIL, PUBLIC_SITE_URL, VERCEL_FRONTEND } from "@/lib/config";
 import { driveIdFromLink,movieInput } from "@/lib/validation";
 import type { Movie,Stats } from "@/lib/types";
 import { compressPoster,uploadPoster } from "@/lib/drive";
@@ -27,7 +27,7 @@ export default function Admin(){
   const driveToken=useRef<{token:string;expires:number}|null>(null),editorRef=useRef<HTMLFormElement>(null);
   const request=useCallback(async(path:string,options:RequestInit={},account?:User)=>{
     const current=account||user;if(!current)throw new Error("Sign in again to continue.");
-    const base=location.hostname==="127.0.0.1"?"http://127.0.0.1:5173":PUBLIC_SITE_URL;
+    const base=VERCEL_FRONTEND?"":location.hostname==="127.0.0.1"?"http://127.0.0.1:5173":PUBLIC_SITE_URL;
     const response=await fetch(base+path,{...options,headers:{"Content-Type":"application/json",Authorization:`Bearer ${await current.getIdToken()}`,...options.headers}});
     const data=await response.json() as {error?:string;movies:Movie[]}&Stats;if(!response.ok)throw new Error(data.error||"Request failed.");return data;
   },[user]);
