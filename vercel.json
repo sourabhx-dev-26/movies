@@ -1,18 +1,18 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "npm run build:vercel",
-  "installCommand": "npm install --legacy-peer-deps",
-  "outputDirectory": "vercel-dist",
+  "buildCommand": "npm run build",
+  "installCommand": "npm ci",
+  "outputDirectory": "dist/public",
   "functions": {
-    "api/bridge.js": {
+    "api/entry.ts": {
       "maxDuration": 30
     }
   },
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "/api/bridge?route=:path*"
+      "destination": "/api/entry?route=:path*"
     }
   ],
   "headers": [

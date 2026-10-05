@@ -1,45 +1,100 @@
-# Movies for You — account setup
+# Movies for You — redeployment setup
 
-The website code is complete. Google account setup is required before admin sign-in and poster uploads work. No Firebase Storage, Firestore, Cloud Functions, or billing upgrade is used by this website.
+The two projects remain separate. The public project contains the movie page and search. The admin project contains the email/password login, movie editor and statistics. Both APIs use the same Firestore database in movies-788c7. No old hosted backend is used.
 
-## 1. Enable Firebase Google sign-in
+No deployment or GitHub push has been performed. Publishing requires the owner's explicit instruction.
 
-Open https://console.firebase.google.com/project/movies-788c7/authentication/providers and click Get started if shown. Enable the Google provider, choose the support email, and save.
+## 1. Enable password login
 
-Under Authentication → Settings → Authorized domains, add **movies-for-you-admin.rrbgroupd9155.chatgpt.site** (without https:// or a path). For local development, also add 127.0.0.1 and localhost. The public movie website and admin website are hosted separately.
+In Firebase Authentication > Sign-in method, enable Email/Password (the password option, not email-link sign-in). Disable the Google sign-in provider if previously enabled.
 
-Admin access is restricted on the server to a verified Firebase token for **anuj8160507@gmail.com**. Visitors do not need to sign in. Do not send anyone your Google password or a service-account key.
+Under Users, create anuj8160507@gmail.com with a password you choose. If the account already exists, use the admin form's Forgot password action to set/reset its password. The email is prefilled and read-only in the login form. No public signup form is provided.
 
-## 2. Enable Google Drive
+On first login, an unverified account receives a verification email and is signed out. Open that email, verify it, then log in again. Only a verified token for the admin email using the password provider is accepted by the server.
 
-Open https://console.cloud.google.com/apis/library/drive.googleapis.com?project=movies-788c7 and click Enable. Use the same Google Cloud project as Firebase. No separate OAuth client is needed: the app uses Firebase’s Google provider with an additional Drive permission.
+Add your admin hostname under Authentication > Settings > Authorized domains. Passwords are managed by Firebase and are never stored in either source folder.
 
-In Google Auth Platform / OAuth consent screen, configure the app name and support email. Under Data Access, add https://www.googleapis.com/auth/drive.file. If the OAuth app is in testing, add anuj8160507@gmail.com as a test user. This permission lets the website manage files it creates, rather than all your existing Drive files.
+Reference: https://firebase.google.com/docs/auth/web/password-auth
 
-The poster proxy reads public Drive images using the provided Firebase web API key. If you see API_KEY_SERVICE_BLOCKED, open https://console.cloud.google.com/apis/credentials?project=movies-788c7, find that web API key, and add Google Drive API to its permitted APIs while retaining the Firebase APIs. Server requests do not send browser referrers; a browser-referrer-restricted key needs a separate server-compatible key for the poster proxy. Never add a service-account credential to browser code.
+## 2. Prepare Firestore and its server credentials
 
-## 3. Add the first movie
+Use the Firestore Standard edition default database in the existing project. If it already exists, keep it. Keep the deny-all rules from firestore.rules: the browser does not access Firestore directly. The backend uses the Firebase Admin SDK and verifies admin identity before protected operations.
 
-1. Open the separate admin website: https://movies-for-you-admin.rrbgroupd9155.chatgpt.site/ . The public movie website has no `/admin` page.
-2. Sign in with anuj8160507@gmail.com.
-3. Click Add movie, then enter its title and Watch URL.
-4. Click Connect Google Drive and use the same admin account.
-5. Choose a JPG, PNG, or WebP image, leave Publish on home page checked, and click Save movie.
+Open Firebase > Project settings > Service accounts > Generate new private key. Keep the downloaded JSON outside both repositories. In both Vercel projects, add the following server environment variable:
 
-The browser compresses the image to at most 1200 pixels on its longest side, uploads it to **Movies for You - Posters** in your Drive, and makes that poster readable by anyone with its link. Images remain in Drive. The website stores only titles, Watch URLs, Drive file IDs, publication status, and visit counters in its hosted database.
+FIREBASE_SERVICE_ACCOUNT_JSON = the complete contents of that JSON file
 
-Alternatively, upload a poster manually to Drive, change Share → General access to Anyone with the link, and paste its Drive file sharing URL into the editor. Use a JPG, PNG, or WebP smaller than 4 MB. Drive links that require a resource key are not supported; re-upload the image through this app instead.
+Select Production, and Preview too if you intend to use preview deployments. The key must belong to movies-788c7. Do not prefix this variable with VITE_ or NEXT_PUBLIC_. Do not paste the key into frontend code or GitHub.
 
-Only uploaded posters become public; the folder and unrelated Drive files stay private. Hiding or deleting a movie removes it from the catalog but leaves its Drive image intact. Remove unwanted images manually in Drive.
+The service account must have access to Firestore. The API creates movies, metadata/catalog, analytics/summary, daily_visits and visit_sessions as needed; no manual collection creation is required. Public reads expose only published movie records. Catalog create/delete and visit counting use Firestore transactions. The public movie list may be cached for up to 30 seconds; admin responses are not cached. Statistics retain total visits and show the last 30 days; old session records are pruned in bounded batches when the admin refreshes statistics.
 
-## Visits and limits
+References: https://firebase.google.com/docs/admin/setup and https://firebase.google.com/docs/firestore/security/get-started
 
-Visits are estimated 30-minute browser sessions on the home page, not verified unique people. Refreshes with the same cookie count once, and known bots are filtered. Days follow Asia/Kolkata. Total counts are retained; daily history shows 30 days. The average includes all calendar days since the first recorded visit, including zero-visit days. No IP addresses or fingerprinting data are stored. Automated requests or disabled cookies can distort these counts.
+## 3. Connect Google Drive separately
 
-The catalog supports up to 200 movies. Drive storage and API quotas still apply, and Drive is not a dedicated image CDN; heavy traffic may cause temporary image failures. If a poster fails to load, its Watch button remains usable. Sites provides the website hosting and database; the source is in this workspace. Firebase Authentication and Drive use your existing Google project and account, with no paid Firebase image storage configured.
+Google Drive authorization is independent of the admin login. Firebase Google sign-in is not used.
 
-## Checks and local development
+Enable Google Drive API. Configure the OAuth consent screen for Movies for You, External audience, and add anuj8160507@gmail.com as a test user while Testing. Under Data access, add only:
 
-Install dependencies with npm install --legacy-peer-deps. Run npm run db:generate after schema changes, npm run dev for development, and npm run build for production. The local preview applies generated migrations to a workspace SQLite database automatically; production D1 migrations are applied during Sites publishing. The production build is a small Worker with bundled React pages and embedded logo assets. Authentication and Drive upload require your real Google setup and cannot be verified end to end until you enable these services and sign in.
+https://www.googleapis.com/auth/drive.file
 
-Official references: https://firebase.google.com/docs/auth/web/google-signin · https://developers.google.com/workspace/drive/api/guides/manage-uploads · https://developers.google.com/workspace/drive/api/guides/api-specific-auth
+In Google Cloud > Google Auth Platform > Clients, use/create a Web application OAuth client. Add the full admin origins, including https://your-admin-domain and its production vercel.app origin, under Authorized JavaScript origins. For local testing, also add http://127.0.0.1:5174. The token flow does not require an OAuth redirect route in this application.
+
+In the admin Vercel project's environment, add:
+
+GOOGLE_DRIVE_CLIENT_ID = that Web application's client ID
+
+This client ID is public browser configuration, not a client secret. The app checks that Drive belongs to anuj8160507@gmail.com. Drive access tokens stay in memory and expire. An absent client ID does not prevent login or using a manually uploaded, publicly shared Drive image link.
+
+Poster downloads use GOOGLE_DRIVE_API_KEY when set, otherwise the existing Firebase web API key. In both Vercel projects, set GOOGLE_DRIVE_API_KEY to a server-compatible Google API key restricted to Google Drive API if your existing Firebase key blocks Drive or uses website-referrer restrictions. Retain restrictions on the existing browser key. This server key is not included in browser JavaScript.
+
+Reference: https://developers.google.com/identity/oauth2/web/guides/use-token-model
+
+## 4. Configure Vercel
+
+Create/use two separate Vercel projects connected to the two GitHub repositories. Configure both:
+
+| Setting | Value |
+| --- | --- |
+| Framework | Other |
+| Root directory | Empty |
+| Build command | npm run build |
+| Output directory | dist/public |
+| Install command | npm ci |
+| Node.js | 24.x |
+
+vercel.json declares the build and API routing. The Node API at api/entry.ts uses Firestore directly; backend source is outside the static output.
+
+In the admin project, also set MOVIES_PUBLIC_URL to the public HTTPS origin, without a path. This controls the logo and View website links. No cross-site API URL is required: each browser uses its own project's /api routes. Redeploy after changing environment variables.
+
+## 5. Push manually when ready
+
+Public:
+```powershell
+cd C:\Users\soura\moviesforyou\site
+git add -A
+git commit -m "Use Firestore and prepare public movie search"
+git push origin main
+```
+
+Admin:
+```powershell
+cd C:\Users\soura\moviesforyou\admin-site
+git add -A
+git commit -m "Use Firestore and email password admin login"
+git push origin main
+```
+
+If these GitHub repositories are already connected to Vercel, a push can trigger a deployment. Set the required environments first, or pause Git deployments until you want to publish.
+
+## 6. Final live check
+
+Log in with the prefilled email and your password. If requested, verify the email once. Add a movie using a public Drive link or Connect Google Drive, publish it and check its poster, search match and Watch link on the public site. Verify hide/edit/delete and statistics. Real Firebase login, Firestore access and Drive upload remain dependent on your account configuration and need this live check.
+
+Do not enable public Firestore writes, commit passwords or service-account files, request full Drive access, or enable paid Firebase Storage/Cloud Functions for this app. Images remain in Google Drive. Firestore and hosting quotas still apply.
+
+## Local development
+
+Copy .env.example to .env in each project and supply the server credential. Add GOOGLE_DRIVE_CLIENT_ID and MOVIES_PUBLIC_URL in the admin project as needed. Start with npm run dev. The public preview uses 127.0.0.1:5173 and the admin uses 127.0.0.1:5174. These local processes never publish.
+
+The earlier SQLite file, if any, remains in the ignored data folder and has not been automatically uploaded. Firestore starts with its own records. Build and automated checks use local mocks and do not mutate your cloud account.

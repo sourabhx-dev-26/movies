@@ -1,10 +1,9 @@
 import siteConfig from "./site-config.json";
-export const SITE_ROLE = siteConfig.role;
-declare const __MFY_VERCEL__: boolean;
 declare const __MFY_PUBLIC_URL__: string;
-export const VERCEL_FRONTEND = typeof __MFY_VERCEL__ !== "undefined" && __MFY_VERCEL__;
+declare const __MFY_DRIVE_CLIENT_ID__: string;
+export const SITE_ROLE = siteConfig.role;
 export const PUBLIC_SITE_URL = typeof __MFY_PUBLIC_URL__ === "undefined" ? siteConfig.publicUrl : __MFY_PUBLIC_URL__;
-export const ADMIN_SITE_URL = siteConfig.adminUrl;
+export const DRIVE_CLIENT_ID = typeof __MFY_DRIVE_CLIENT_ID__ === "undefined" ? "" : __MFY_DRIVE_CLIENT_ID__;
 export const firebaseConfig = {
   apiKey: "AIzaSyD861lOa66C-aILcQT5RTpKFHUMI7k7k10",
   authDomain: "movies-788c7.firebaseapp.com",

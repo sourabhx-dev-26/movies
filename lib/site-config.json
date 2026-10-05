@@ -1,5 +1,5 @@
 {
   "role": "public",
-  "publicUrl": "https://movies-for-you.rrbgroupd9155.chatgpt.site",
-  "adminUrl": "https://movies-for-you-admin.rrbgroupd9155.chatgpt.site"
+  "publicUrl": "http://127.0.0.1:5173",
+  "adminUrl": "http://127.0.0.1:5174"
 }

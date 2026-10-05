@@ -1,14 +1,15 @@
-import { database } from "@/lib/database";
-import { firebaseConfig } from "@/lib/config";
-import { apiError, HttpError, requireAdmin } from "@/lib/server-auth";
+import { database } from "../../../../lib/database";
+import { firebaseConfig } from "../../../../lib/config";
+import { apiError, HttpError, requireAdmin } from "../../../../lib/server-auth";
 type Context = { params: Promise<{ id: string }> };
 export async function GET(request: Request, context: Context) {
   try {
     const { id } = await context.params;
-    const movie = await database().prepare("SELECT drive_file_id AS driveFileId, published FROM movies WHERE id=?").bind(id).first<{ driveFileId: string; published: number }>();
+    const movie = await database().getMovie(id);
     if (!movie) throw new HttpError(404, "Poster not found.");
     if (!movie.published) await requireAdmin(request);
-    const upstream = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(movie.driveFileId)}?alt=media&key=${firebaseConfig.apiKey}`, { signal: AbortSignal.timeout(12000) });
+    const apiKey = process.env.GOOGLE_DRIVE_API_KEY || firebaseConfig.apiKey;
+    const upstream = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(movie.driveFileId)}?alt=media&key=${encodeURIComponent(apiKey)}`, { signal: AbortSignal.timeout(12000) });
     if (!upstream.ok) throw new HttpError(502, "The Drive poster is unavailable. Check public sharing and Google Drive API access.");
     const type = (upstream.headers.get("content-type") || "").split(";")[0];
     if (!["image/jpeg", "image/png", "image/webp"].includes(type)) throw new HttpError(415, "This Drive file is not a supported image.");

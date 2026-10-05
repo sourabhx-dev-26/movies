@@ -1,28 +1,32 @@
 import { createServer } from "node:http";
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync,readFileSync,readdirSync } from "node:fs";
-import { build } from "esbuild";
-mkdirSync(".sites-runtime",{recursive:true});
-const config=JSON.parse(readFileSync("lib/site-config.json","utf8"));const port=config.role==="admin"?5174:5173;
-const sqlite=new DatabaseSync(".sites-runtime/preview.sqlite");
-sqlite.exec("CREATE TABLE IF NOT EXISTS _local_migrations (name TEXT PRIMARY KEY)");
-for(const file of (config.role==="admin"?[]:readdirSync("drizzle").filter(name=>name.endsWith(".sql")))){if(!sqlite.prepare("SELECT name FROM _local_migrations WHERE name=?").get(file)){sqlite.exec(readFileSync(`drizzle/${file}`,"utf8"));sqlite.prepare("INSERT INTO _local_migrations (name) VALUES (?)").run(file);}}
-class Statement{
-  constructor(sql,parameters=[]){this.sql=sql;this.parameters=parameters;}
-  bind(...parameters){return new Statement(this.sql,parameters);}
-  async first(){return sqlite.prepare(this.sql).get(...this.parameters)||null;}
-  async all(){return {results:sqlite.prepare(this.sql).all(...this.parameters)};}
-  runSync(){const result=sqlite.prepare(this.sql).run(...this.parameters);return {success:true,meta:{changes:Number(result.changes)}};}
-  async run(){return this.runSync();}
-}
-globalThis.__MFY_ENV__={DB:{prepare(sql){return new Statement(sql);},async batch(statements){sqlite.exec("BEGIN");try{const results=statements.map(statement=>statement.runSync());sqlite.exec("COMMIT");return results;}catch(error){sqlite.exec("ROLLBACK");throw error;}}}};
-await build({entryPoints:["worker.ts"],outfile:".sites-runtime/preview-worker.mjs",bundle:true,format:"esm",platform:"node",target:"es2022",plugins:[{name:"local-cloudflare",setup(builder){builder.onResolve({filter:/^cloudflare:workers$/},()=>({path:"local-env",namespace:"mfy"}));builder.onLoad({filter:/.*/,namespace:"mfy"},()=>({contents:"export const env=globalThis.__MFY_ENV__;",loader:"js"}));}}]});
-const worker=(await import("../.sites-runtime/preview-worker.mjs")).default;
-createServer(async(incoming,outgoing)=>{
-  try{
-    const body=[];for await(const chunk of incoming)body.push(chunk);
-    const request=new Request(`http://127.0.0.1:${port}${incoming.url}`,{method:incoming.method,headers:incoming.headers,...(!["GET","HEAD"].includes(incoming.method)?{body:Buffer.concat(body)}:{})});
-    const response=await worker.fetch(request);
-    outgoing.writeHead(response.status,Object.fromEntries(response.headers));outgoing.end(Buffer.from(await response.arrayBuffer()));
-  }catch(error){console.error(error);outgoing.writeHead(500);outgoing.end("Local preview unavailable");}
-}).listen(port,"127.0.0.1",()=>console.log(`Local: http://127.0.0.1:${port}`));
+import { readFileSync } from "node:fs";
+import { handleApiRequest } from "../dist/server.mjs";
+const config = JSON.parse(readFileSync("lib/site-config.json", "utf8"));
+const port = config.role === "admin" ? 5174 : 5173;
+createServer(async (incoming, outgoing) => {
+  try {
+    const chunks = []; let size = 0;
+    for await (const chunk of incoming) {
+      size += chunk.length;
+      if (size > 10000) { outgoing.writeHead(413); outgoing.end("Request too large"); return; }
+      chunks.push(chunk);
+    }
+    const method = incoming.method || "GET", url = new URL(incoming.url, `http://127.0.0.1:${port}`);
+    const request = new Request(url, { method, headers: incoming.headers, ...(!["GET", "HEAD"].includes(method) ? { body: Buffer.concat(chunks) } : {}) });
+    let response;
+    if (url.pathname.startsWith("/api/")) response = await handleApiRequest(request);
+    else if (!["GET","HEAD"].includes(method)) response = new Response("Method not allowed",{status:405});
+    else {
+      const file = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+      if (!/^(index\.html|app\.js|chunk-[A-Z0-9]+\.js|styles\.css|logo\.png|favicon\.png|apple-touch-icon\.png)$/.test(file)) response = new Response("Page not found",{status:404});
+      else {
+        try {
+          const type = file.endsWith(".html") ? "text/html; charset=utf-8" : file.endsWith(".js") ? "text/javascript; charset=utf-8" : file.endsWith(".css") ? "text/css; charset=utf-8" : "image/png";
+          response = new Response(method === "HEAD" ? null : readFileSync("dist/public/" + file),{headers:{"Content-Type":type}});
+        } catch { response = new Response("Page not found",{status:404}); }
+      }
+    }
+    outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+    outgoing.end(Buffer.from(await response.arrayBuffer()));
+  } catch (error) { console.error(error); outgoing.writeHead(500); outgoing.end("Local preview unavailable"); }
+}).listen(port, "127.0.0.1", () => console.log(`Local only: http://127.0.0.1:${port}`));

@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { ADMIN_EMAIL, ADMIN_SITE_URL, firebaseConfig } from "./config";
+import { ADMIN_EMAIL, firebaseConfig } from "./config";
 
 const keys = createRemoteJWKSet(new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"));
 export class HttpError extends Error {
@@ -11,7 +11,7 @@ export function requireSameOrigin(request: Request) {
 }
 export function trustedOrigin(request:Request,origin:string){
   const url=new URL(request.url);
-  return origin===url.origin || origin===ADMIN_SITE_URL || (url.hostname==="127.0.0.1" && origin==="http://127.0.0.1:5174");
+  return origin===url.origin;
 }
 export async function requireAdmin(request: Request) {
   const token = request.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
@@ -25,8 +25,9 @@ export async function requireAdmin(request: Request) {
     if (!payload.sub || payload.sub.length > 128 || !payload.iat || payload.iat > Date.now() / 1000 || !payload.exp) throw new Error("Invalid identity");
   } catch { throw new HttpError(401, "Your session expired. Sign in again."); }
   if (payload.email_verified !== true || typeof payload.email !== "string" || payload.email.toLowerCase() !== ADMIN_EMAIL) {
-    throw new HttpError(403, "This Google account does not have admin access.");
+    throw new HttpError(403, "Only the verified admin email can access this panel.");
   }
+  if ((payload.firebase as {sign_in_provider?:string}|undefined)?.sign_in_provider !== "password") throw new HttpError(401, "Sign in with your admin email and password.");
   return payload;
 }
 export function apiError(error: unknown) {

@@ -3,7 +3,7 @@ import { useCallback,useEffect,useRef,useState } from "react";
 import type { User } from "firebase/auth";
 import { Film,Plus,Upload,Pencil,Eye,EyeOff,Trash2,LogOut,RefreshCw,ShieldCheck,BarChart3,Check,X } from "lucide-react";
 import { Brand,SiteFooter } from "@/components/brand";
-import { ADMIN_EMAIL, PUBLIC_SITE_URL, VERCEL_FRONTEND } from "@/lib/config";
+import { ADMIN_EMAIL, PUBLIC_SITE_URL } from "@/lib/config";
 import { driveIdFromLink,movieInput } from "@/lib/validation";
 import type { Movie,Stats } from "@/lib/types";
 import { compressPoster,uploadPoster } from "@/lib/drive";
@@ -12,13 +12,14 @@ const emptyDraft:Draft={title:"",watchUrl:"",driveFileId:"",published:1};
 function authError(error:unknown){
   const code=(error as {code?:string})?.code;
   if(code==="auth/unauthorized-domain")return "Add this website’s domain to Firebase Authentication → Settings → Authorized domains, then try again.";
-  if(code==="auth/operation-not-allowed"||code==="auth/configuration-not-found")return "Enable Google sign-in in Firebase Authentication → Sign-in method first.";
-  if(code==="auth/popup-blocked")return "Your browser blocked Google sign-in. Allow popups for this website and try again.";
-  if(code==="auth/popup-closed-by-user"||code==="auth/cancelled-popup-request")return "Sign-in was cancelled. You can try again when ready.";
-  if(code==="auth/user-mismatch")return `Connect Drive with the same admin account: ${ADMIN_EMAIL}.`;
+  if(code==="auth/operation-not-allowed"||code==="auth/configuration-not-found")return "Enable Email/Password in Firebase Authentication → Sign-in method first.";
+  if(["auth/invalid-credential","auth/wrong-password","auth/user-not-found"].includes(code||""))return "Incorrect password. Try again or reset your password.";
+  if(code==="auth/too-many-requests")return "Too many attempts. Please wait a few minutes and try again.";
+  if(code==="auth/network-request-failed")return "Check your internet connection and try again.";
   return error instanceof Error?error.message:"Something went wrong. Please try again.";
 }
 export default function Admin(){
+  const [password,setPassword]=useState(""),[showPassword,setShowPassword]=useState(false);
   const [user,setUser]=useState<User|null>(null),[ready,setReady]=useState(false),[authorized,setAuthorized]=useState(false);
   const [movies,setMovies]=useState<Movie[]>([]),[stats,setStats]=useState<Stats|null>(null);
   const [error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState("");
@@ -27,8 +28,7 @@ export default function Admin(){
   const driveToken=useRef<{token:string;expires:number}|null>(null),editorRef=useRef<HTMLFormElement>(null);
   const request=useCallback(async(path:string,options:RequestInit={},account?:User)=>{
     const current=account||user;if(!current)throw new Error("Sign in again to continue.");
-    const base=VERCEL_FRONTEND?"":location.hostname==="127.0.0.1"?"http://127.0.0.1:5173":PUBLIC_SITE_URL;
-    const response=await fetch(base+path,{...options,headers:{"Content-Type":"application/json",Authorization:`Bearer ${await current.getIdToken()}`,...options.headers}});
+    const response=await fetch(path,{...options,headers:{"Content-Type":"application/json",Authorization:`Bearer ${await current.getIdToken()}`,...options.headers}});
     const data=await response.json() as {error?:string;movies:Movie[]}&Stats;if(!response.ok)throw new Error(data.error||"Request failed.");return data;
   },[user]);
   const load=useCallback(async(account:User)=>{
@@ -37,19 +37,36 @@ export default function Admin(){
   useEffect(()=>{
     let unsubscribe=()=>{};let active=true;
     Promise.all([import("firebase/auth"),import("@/lib/firebase-client")]).then(([sdk,client])=>{
-      if(!active)return;unsubscribe=sdk.onAuthStateChanged(client.auth,account=>{setUser(account);setReady(true);setAuthorized(false);if(account)void load(account);});
+      if(!active)return;unsubscribe=sdk.onAuthStateChanged(client.auth,account=>{setUser(account);setReady(true);setAuthorized(false);if(account?.emailVerified)void load(account);});
     }).catch(e=>{setReady(true);setError(authError(e));});
     return()=>{active=false;unsubscribe();};
     // The subscription passes the current account explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
+  useEffect(()=>{void import("@/lib/drive-auth").then(module=>module.prepareDrive()).catch(()=>{});},[]);
   useEffect(()=>{if(!file){setPreview("");return;}const url=URL.createObjectURL(file);setPreview(url);return()=>URL.revokeObjectURL(url);},[file]);
   useEffect(()=>{if(draft){editorRef.current?.scrollIntoView({behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth",block:"start"});editorRef.current?.querySelector<HTMLInputElement>("input")?.focus({preventScroll:true});}},[draft?.id,!!draft]);
-  async function login(){setBusy("login");setError("");try{const[sdk,client]=await Promise.all([import("firebase/auth"),import("@/lib/firebase-client")]);await sdk.signInWithPopup(client.auth,client.googleProvider());}catch(e){setError(authError(e));}finally{setBusy("");}}
+  async function login(event:React.FormEvent){
+    event.preventDefault();setBusy("login");setError("");setNotice("");
+    try{
+      const[sdk,client]=await Promise.all([import("firebase/auth"),import("@/lib/firebase-client")]);
+      const result=await sdk.signInWithEmailAndPassword(client.auth,ADMIN_EMAIL,password);
+      setPassword("");
+      if(!result.user.emailVerified){
+        try{await sdk.sendEmailVerification(result.user);setNotice("A verification email was sent. Open it, verify your email, then log in again.");}
+        finally{await sdk.signOut(client.auth);}
+      }
+    }catch(e){setError(authError(e));}finally{setBusy("");}
+  }
+  async function resetPassword(){
+    setBusy("reset");setError("");setNotice("");
+    try{const[sdk,client]=await Promise.all([import("firebase/auth"),import("@/lib/firebase-client")]);await sdk.sendPasswordResetEmail(client.auth,ADMIN_EMAIL);setNotice("Password reset instructions have been sent to your admin email.");}
+    catch(e){setError(authError(e));}finally{setBusy("");}
+  }
   async function logout(){const[sdk,client]=await Promise.all([import("firebase/auth"),import("@/lib/firebase-client")]);await sdk.signOut(client.auth);driveToken.current=null;setDriveConnected(false);setDraft(null);setMovies([]);setStats(null);setError("");setNotice("");}
   async function connectDrive(){
     if(!user)return;setBusy("drive");setError("");
-    try{const[sdk,client]=await Promise.all([import("firebase/auth"),import("@/lib/firebase-client")]);const result=await sdk.reauthenticateWithPopup(user,client.googleProvider(true));const token=sdk.GoogleAuthProvider.credentialFromResult(result)?.accessToken;if(!token)throw new Error("Drive permission was not granted. Try connecting again.");driveToken.current={token,expires:Date.now()+50*60*1000};setDriveConnected(true);setNotice("Google Drive connected. You can upload a poster now.");}
+    try{const module=await import("@/lib/drive-auth");driveToken.current=await module.connectDriveAccount();setDriveConnected(true);setNotice("Google Drive connected. You can upload a poster now.");}
     catch(e){setError(authError(e));}finally{setBusy("");}
   }
   function openEditor(movie?:Movie){setError("");setNotice("");setFile(null);setDriveLink("");setDeleteId(null);setDraft(movie?{id:movie.id,title:movie.title,watchUrl:movie.watchUrl,driveFileId:movie.driveFileId,published:movie.published}:{...emptyDraft});}
@@ -71,7 +88,7 @@ export default function Admin(){
   return <div className="site-shell admin-shell"><a className="skip-link" href="#admin-main">Skip to admin</a><header className="site-header"><Brand/><nav><a href={PUBLIC_SITE_URL}>View website</a>{user&&<button className="button secondary-button compact" onClick={()=>void logout()}><LogOut size={16} aria-hidden="true"/>Sign out</button>}</nav></header>
   <main id="admin-main" className="admin-main"><div className="admin-heading"><div><div className="eyebrow">BEHIND THE SCENES</div><h1>Your movie desk.</h1><p>Manage the collection. See who’s stopping by.</p></div>{authorized&&<button className="button primary-button" disabled={!!busy} onClick={()=>openEditor()}><Plus size={18} aria-hidden="true"/>Add movie</button>}</div>
   {error&&<div className="message error-message" role="alert">{error}</div>}{notice&&<div className="message success-message" role="status">{notice}</div>}
-  {!authorized?<section className="login-panel"><div className="empty-icon"><ShieldCheck size={28} aria-hidden="true"/></div><h2>Admin sign-in</h2><p>Use <strong>{ADMIN_EMAIL}</strong> to manage movies and see visit statistics.</p><button className="button primary-button" disabled={!ready||!!busy} onClick={()=>void login()}>{!ready?"Preparing sign-in…":busy==="login"?"Signing in…":user?"Use the admin Google account":"Continue with Google"}</button><details className="setup-details"><summary>First-time setup</summary><ol><li>In Firebase, enable Google under Authentication → Sign-in method.</li><li>Add this website’s hostname under Authentication → Settings → Authorized domains.</li><li>In the same Google Cloud project, enable the Google Drive API and allow the <code>drive.file</code> scope in the OAuth consent screen. Add the admin email as a test user if the app is in testing.</li><li>If Google rejects public poster requests, allow Google Drive API access for this Firebase web API key.</li></ol><p>Posters must be shared with “Anyone with the link.” Uploading sets this for each image. Only the admin can change the catalog.</p></details></section>:<>
+  {!authorized?<section className="login-panel"><div className="empty-icon"><ShieldCheck size={28} aria-hidden="true"/></div><h2>Admin login</h2><p>Enter your password to manage movies and see visit statistics.</p><form className="login-form" onSubmit={event=>void login(event)}><label htmlFor="admin-email">Email</label><input id="admin-email" type="email" value={ADMIN_EMAIL} readOnly autoComplete="username"/><label htmlFor="admin-password">Password</label><div className="password-field"><input id="admin-password" type={showPassword?"text":"password"} value={password} onChange={event=>setPassword(event.target.value)} required autoComplete="current-password" maxLength={4096} disabled={!!busy}/><button className="password-toggle" type="button" aria-label={showPassword?"Hide password":"Show password"} aria-pressed={showPassword} onClick={()=>setShowPassword(!showPassword)}>{showPassword?<EyeOff size={19} aria-hidden="true"/>:<Eye size={19} aria-hidden="true"/>}</button></div><button className="button primary-button login-submit" type="submit" disabled={!ready||!!busy}>{!ready?"Preparing login…":busy==="login"?"Logging in…":"Log in"}</button><button className="text-link reset-password" type="button" disabled={!ready||!!busy} onClick={()=>void resetPassword()}>{busy==="reset"?"Sending reset email…":"Forgot password?"}</button></form></section>:<>
   <div className="account-note"><ShieldCheck size={16} aria-hidden="true"/>Signed in as {user?.email}</div>
   <section className="stats-section" aria-labelledby="stats-title"><div className="section-heading"><h2 id="stats-title">Website visits</h2><button className="button secondary-button compact" disabled={!!busy} onClick={()=>user&&void load(user)}><RefreshCw size={15} aria-hidden="true"/>Refresh</button></div><div className="stat-grid">{[{label:"Today",value:stats?.today,hint:"Asia/Kolkata"},{label:"Total visits",value:stats?.total,hint:"Since tracking began"},{label:"Daily average",value:stats?.average,hint:stats?.days?`Across ${stats.days} calendar days`:"No visits yet"}].map(stat=><div className="stat-card" key={stat.label}><span>{stat.label}</span><strong>{stat.value===undefined?"—":stat.value.toLocaleString("en-IN")}</strong><small>{stat.hint}</small></div>)}</div><p className="helper">Estimated browser sessions: refreshes within 30 minutes count once. Known bots are filtered. The average includes days with zero visits.</p><details className="history"><summary><BarChart3 size={17} aria-hidden="true"/>Daily history · Last 30 days</summary><div className="history-rows">{stats?.daily.map(row=><div className="history-row" key={row.day}><time dateTime={row.day}>{new Date(row.day+"T00:00:00+05:30").toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",timeZone:"Asia/Kolkata"})}</time><div className="history-bar" aria-hidden="true"><span style={{width:`${row.visits?Math.max(3,row.visits/Math.max(1,...stats.daily.map(d=>d.visits))*100):0}%`}}/></div><strong>{row.visits}</strong></div>)}</div></details></section>
   {draft&&<form className="editor" onSubmit={save} ref={editorRef}><div className="section-heading"><h2>{draft.id?"Edit movie":"Add a movie"}</h2><button className="icon-button" type="button" aria-label="Close movie editor" disabled={!!busy} onClick={()=>setDraft(null)}><X size={20} aria-hidden="true"/></button></div><div className="editor-grid"><div><label htmlFor="title">Movie title</label><input id="title" required maxLength={160} value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})} placeholder="Enter the movie name" disabled={!!busy}/><label htmlFor="watch-url">Watch link</label><input id="watch-url" type="url" required maxLength={2048} value={draft.watchUrl} onChange={e=>setDraft({...draft,watchUrl:e.target.value})} placeholder="https://…" disabled={!!busy}/><p className="helper">The Watch button opens this link in a new tab.</p><label className="checkbox-label"><input type="checkbox" checked={!!draft.published} disabled={!!busy} onChange={e=>setDraft({...draft,published:e.target.checked?1:0})}/>Publish on home page</label></div><div><label htmlFor="poster-file">Movie poster</label><div className="upload-panel">{preview?<img className="upload-preview" src={preview} alt="Selected poster preview"/>:<Upload size={26} aria-hidden="true"/>}<input id="poster-file" type="file" accept="image/jpeg,image/png,image/webp" disabled={!!busy} key={file?.name||draft.driveFileId||"empty"} onChange={e=>{setFile(e.target.files?.[0]||null);setDriveLink("");}}/><p className="helper">JPG, PNG or WebP · Up to 12 MB<br/>Images are compressed and saved to your Drive.</p><button type="button" className="button secondary-button compact" disabled={!!busy} onClick={()=>void connectDrive()}>{driveConnected?<Check size={16} aria-hidden="true"/>:<Upload size={16} aria-hidden="true"/>}{busy==="drive"?"Connecting…":driveConnected?"Drive connected · Reconnect":"Connect Google Drive"}</button></div><label htmlFor="drive-link">Or use an existing Drive image link</label><input id="drive-link" type="url" maxLength={2048} value={driveLink} disabled={!!busy||!!file} onChange={e=>setDriveLink(e.target.value)} placeholder="https://drive.google.com/file/d/…/view"/><p className="helper">Share it with “Anyone with the link” first.{draft.driveFileId&&!file&&!driveLink&&<> <a href={`https://drive.google.com/file/d/${draft.driveFileId}/view`} target="_blank" rel="noopener noreferrer">Current poster</a> will be kept.</>}</p></div></div><div className="editor-actions"><p className="helper">Your uploaded posters are public. Your other Drive files stay private.</p><div><button className="button secondary-button" type="button" disabled={!!busy} onClick={()=>setDraft(null)}>Cancel</button><button className="button primary-button" disabled={!!busy} type="submit">{busy==="save"?"Saving…":"Save movie"}</button></div></div></form>}
