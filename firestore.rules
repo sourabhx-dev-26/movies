@@ -1,9 +1,22 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'anuj8160507@gmail.com'
+        && request.auth.token.email_verified == true
+        && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+    match /movies/{movieId} {
+      allow read: if isAdmin() || resource.data.published == 1;
+      allow write: if false;
+    }
+    match /analytics/summary {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }
   }
 }
-

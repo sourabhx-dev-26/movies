@@ -1,23 +1,33 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Film, Clapperboard, RefreshCw, Search, X } from "lucide-react";
 import { Brand, TelegramLink, SiteFooter } from "@/components/brand";
 import { MovieCard } from "@/components/movie-card";
 import type { Movie } from "@/lib/types";
+import { readApiResponse } from "@/lib/api-response";
+import { recordPageView } from "@/lib/page-views";
 export default function Home() {
   const [movies,setMovies] = useState<Movie[]>([]);
+  const live = useRef(false);
   const [search,setSearch] = useState("");
   const query = search.trim().toLocaleLowerCase();
   const filteredMovies = movies.filter(movie => movie.title.toLocaleLowerCase().includes(query));
   const [loading,setLoading] = useState(true); const [error,setError] = useState("");
   const load = useCallback(async () => {
-    setLoading(true);setError("");
-    try { const response=await fetch("/api/movies");const data=await response.json() as {error?:string;movies:Movie[]};if (!response.ok) throw new Error(data.error);setMovies(data.movies); }
-    catch {setError("We couldn’t load the movies. Please try again in a moment.");} finally{setLoading(false);}
+    try { const response=await fetch("/api/movies",{cache:"no-store"});const data=await readApiResponse<{movies:Movie[]}>(response);if(!live.current)setMovies(data.movies);setError(""); }
+    catch {if(!live.current)setError("We couldn’t load the movies. Please try again in a moment.");} finally{setLoading(false);}
   },[]);
-  useEffect(()=>{void load();void fetch("/api/visit",{method:"POST",keepalive:true}).catch(()=>{});},[load]);
+  useEffect(()=>{
+    let active=true,unsubscribe=()=>{};
+    void load();void recordPageView();
+    void import("@/lib/live-data").then(module=>{if(active)unsubscribe=module.watchMovies(false,data=>{if(!active)return;live.current=true;setMovies(data);setLoading(false);setError("");},()=>{live.current=false;if(active)void load();});}).catch(()=>{});
+    const refresh=()=>{if(!document.hidden&&!live.current)void load();};
+    const pageshow=(event:PageTransitionEvent)=>{if(event.persisted){void recordPageView(true);refresh();}};
+    const interval=setInterval(refresh,10000);window.addEventListener("pageshow",pageshow);window.addEventListener("focus",refresh);document.addEventListener("visibilitychange",refresh);
+    return()=>{active=false;unsubscribe();clearInterval(interval);window.removeEventListener("pageshow",pageshow);window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh);};
+  },[load]);
   return <div className="site-shell"><a className="skip-link" href="#movies">Skip to movies</a><header className="site-header"><Brand /><nav aria-label="Main navigation"><a className="nav-current" href="#movies">Movies</a><TelegramLink /></nav></header><main>
-    <section className="hero" aria-labelledby="hero-title"><div className="hero-copy"><div className="eyebrow"><span className="gold-line" />YOUR NEXT WATCH</div><h1 id="hero-title">Movie night,<br /><span>made simple.</span></h1><p>Find a movie. Tap Watch. Enjoy.</p><a className="text-link" href="#movies"><Clapperboard size={18} aria-hidden="true" />Explore the movies</a></div><div className="hero-emblem"><div className="emblem-ring"><img src="/logo.png" width="230" height="230" alt="Movies for You gold cinema emblem" /></div><span className="emblem-caption">PRESS PLAY. TAKE A BREAK.</span></div></section>
+    <section className="hero" aria-labelledby="hero-title"><div className="hero-copy"><div className="eyebrow"><span className="gold-line" />YOUR NEXT WATCH</div><h1 id="hero-title">Movie night,<br /><span>made simple.</span></h1><p>Find a movie. Tap Watch. Enjoy.</p><a className="text-link" href="#movies"><Clapperboard size={18} aria-hidden="true" />Explore the movies</a></div><div className="hero-emblem"><div className="emblem-ring"><img src="/logo.png" width="230" height="230" decoding="async" alt="Movies for You gold cinema emblem" /></div><span className="emblem-caption">PRESS PLAY. TAKE A BREAK.</span></div></section>
     <section id="movies" className="catalog" aria-labelledby="movies-title">
       <div className="section-heading"><div><div className="eyebrow">THE COLLECTION</div><h2 id="movies-title">Latest movies</h2></div>{!loading&&!error&&<span className="movie-count" role="status" aria-live="polite" aria-atomic="true">{query?`${filteredMovies.length} of ${movies.length} movies`:`${movies.length} ${movies.length===1?"movie":"movies"}`}</span>}</div>
       <div className="movie-search" role="search" aria-label="Movie search">

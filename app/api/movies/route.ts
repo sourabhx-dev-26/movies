@@ -7,7 +7,7 @@ export async function GET(request: Request) {
     const admin = SITE_ROLE === "admin" || new URL(request.url).searchParams.get("admin") === "1";
     if (admin) await requireAdmin(request);
     const movies = await database().listMovies(admin);
-    return Response.json({ movies }, { headers: { "Cache-Control": admin ? "no-store" : "public, max-age=0, s-maxage=30" } });
+    return Response.json({ movies }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return apiError(error); }
 }
 export async function POST(request: Request) {

@@ -15,4 +15,6 @@ See SETUP.md for the required Firebase account, server environment variables, Dr
 
 Use Node.js 22.13 or newer. The public preview uses 127.0.0.1:5173, the admin preview 127.0.0.1:5174. They share Firestore but each uses its own API. Firestore credentials belong only in server environments, never browser code.
 
-The deny-all firestore.rules file is intentional: the authenticated server SDK accesses Firestore through its service account. Keep both GitHub repositories separate.
+Publish firestore.rules to enable read-only live snapshots: visitors may read published movies, and the verified password admin may read all movies and the analytics summary. Browser writes remain denied; the authenticated server SDK performs writes. Keep both GitHub repositories separate.
+
+The counter now measures page views, including every reload in the same browser. Retry requests for one page view count once. Admin sessions restore across reloads and sign out after 30 minutes of inactivity. Movies update through Firestore snapshots, with an API fallback when live reads are unavailable. Stats refresh automatically and have a separate manual refresh action. Poster cards are wider and respect reduced-motion preferences.

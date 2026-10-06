@@ -8,13 +8,31 @@ import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import { MemoryFirestore } from "./test-firestore.mjs";
 
 const directory=path.resolve(".local/checks");mkdirSync(directory,{recursive:true});
-for(const name of ["config","validation","server-auth","firestore-store","api-response"]){
+globalThis.__LIVE_LISTENERS__=[];
+await build({entryPoints:["lib/live-data.ts"],outfile:path.join(directory,"live-data.mjs"),bundle:true,format:"esm",platform:"node",plugins:[{name:"snapshot-fixtures",setup(builder){
+  builder.onResolve({filter:/^firebase\/firestore$/},()=>({path:"fixture-firestore",namespace:"fixtures"}));
+  builder.onLoad({filter:/.*/,namespace:"fixtures"},()=>({contents:`export const getFirestore=()=>({}),collection=(db,path)=>({path}),doc=(db,path)=>({path}),where=(...args)=>({where:args}),limit=n=>({limit:n}),query=(ref,...constraints)=>({...ref,constraints});export function onSnapshot(source,next,error){const entry={source,next,error,closed:false};globalThis.__LIVE_LISTENERS__.push(entry);return()=>entry.closed=true;}`,loader:"js"}));
+  builder.onLoad({filter:/[\\/]lib[\\/]firebase-app\.ts$/},()=>({contents:"export const firebaseApp={};",loader:"js"}));
+}}]});
+const liveData=await import(pathToFileURL(path.join(directory,"live-data.mjs")));
+let liveMovies,visitChanges=0;const stopPublic=liveData.watchMovies(false,data=>liveMovies=data,()=>{}),stopAdmin=liveData.watchMovies(true,()=>{},()=>{}),stopVisits=liveData.watchVisits(()=>visitChanges++,()=>{});
+const [publicListener,adminListener,visitsListener]=globalThis.__LIVE_LISTENERS__;
+assert.deepEqual(publicListener.source.constraints[0].where,["published","==",1]);assert.equal(publicListener.source.constraints[1].limit,200);assert.equal(adminListener.source.constraints[0].limit,200);
+publicListener.next({metadata:{fromCache:true},empty:true,docs:[]});assert.equal(liveMovies,undefined);
+const snapshot=values=>({metadata:{fromCache:false},empty:values.length===0,docs:values.map(value=>({id:value.id,data:()=>value}))});
+publicListener.next(snapshot([{id:"a",title:"First",watchUrl:"https://example.com",driveFileId:"abcdefghijklmno",createdAt:1}]));assert.equal(liveMovies[0].title,"First");
+publicListener.next(snapshot([{id:"b",title:"New movie",watchUrl:"https://example.com",driveFileId:"abcdefghijklmno",createdAt:2}]));assert.equal(liveMovies[0].title,"New movie");publicListener.next(snapshot([]));assert.deepEqual(liveMovies,[]);
+visitsListener.next();visitsListener.next();assert.equal(visitChanges,2);stopPublic();stopAdmin();stopVisits();assert(globalThis.__LIVE_LISTENERS__.every(listener=>listener.closed));delete globalThis.__LIVE_LISTENERS__;
+console.log("PASS: snapshot published-only query, add/edit/removal callbacks, empty-cache protection, statistics changes and listener cleanup");
+for(const name of ["config","validation","server-auth","firestore-store","api-response","admin-session","poster-download"]){
   const source=readFileSync("lib/"+name+".ts","utf8");
   const output=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText.replace(/from "\.\/(config|types|validation|server-auth)"/g,'from "./$1.mjs"').replace(/^import siteConfig from .*;$/m,"const siteConfig="+readFileSync("lib/site-config.json","utf8")+";");
   writeFileSync(path.join(directory,name+".mjs"),output);
 }
 const validation=await import(pathToFileURL(path.join(directory,"validation.mjs")));
 const {readApiResponse}=await import(pathToFileURL(path.join(directory,"api-response.mjs")));
+const session=await import(pathToFileURL(path.join(directory,"admin-session.mjs")));
+session.clearActivity();session.touchActivity(1000);assert(!session.idleExpired(1000+session.ADMIN_IDLE_MS-1));assert(session.idleExpired(1000+session.ADMIN_IDLE_MS));session.touchActivity(5000);assert(!session.idleExpired(5000+session.ADMIN_IDLE_MS-1));session.clearActivity();
 await assert.rejects(()=>readApiResponse(new Response("A server error has occurred",{status:500})),/movie API failed to start/);
 await assert.rejects(()=>readApiResponse(Response.json({error:"Missing credential"},{status:503})),/Missing credential/);
 assert.deepEqual(await readApiResponse(Response.json({movies:[]})),{movies:[]});
@@ -29,12 +47,25 @@ assert.equal(validation.indiaDay(new Date("2026-10-04T18:30:00Z")),"2026-10-05")
 const {publicKey,privateKey}=await generateKeyPair("RS256");
 const jwk=await exportJWK(publicKey);jwk.kid="test-key";jwk.alg="RS256";
 const realFetch=globalThis.fetch;
+let posterMode="fallback",posterRequests=[];
 globalThis.fetch=async(url,options)=>{
   if(String(url).includes("service_accounts/v1/jwk/securetoken"))return Response.json({keys:[jwk]},{headers:{"Cache-Control":"public,max-age=3600"}});
-  if(String(url).includes("www.googleapis.com/drive/v3/files/"))return new Response(new Uint8Array([1,2,3]),{headers:{"Content-Type":"image/png"}});
+  if(/drive\.google\.com\/thumbnail|www\.googleapis\.com\/drive\/v3\/files|drive\.usercontent\.google\.com\/download/.test(String(url))){
+    posterRequests.push(String(url));
+    if(posterMode==="private")return new Response("<html>Sign in</html>",{status:403,headers:{"Content-Type":"text/html"}});
+    if(posterMode==="oversize")return new Response(new Uint8Array([1]),{headers:{"Content-Type":"image/png","Content-Length":String(5*1024*1024)}});
+    if(posterMode==="fallback"&&String(url).includes("drive.google.com/thumbnail"))return new Response("<html>Unavailable</html>",{status:503,headers:{"Content-Type":"text/html"}});
+    return new Response(new Uint8Array([1,2,3]),{headers:{"Content-Type":"image/png"}});
+  }
   throw new Error("Unexpected external request in local verification");
 };
 try{
+  const {downloadPoster}=await import(pathToFileURL(path.join(directory,"poster-download.mjs")));
+  assert.equal((await downloadPoster("abcdefghijklmno")).type,"image/png");assert.equal(posterRequests.length,2);
+  posterMode="thumbnail";posterRequests=[];assert.equal((await downloadPoster("abcdefghijklmno")).size,3);assert.equal(posterRequests.length,1);
+  posterMode="private";await assert.rejects(()=>downloadPoster("abcdefghijklmno"),error=>error.status===502&&error.message.includes("Anyone with the link"));
+  posterMode="oversize";await assert.rejects(()=>downloadPoster("abcdefghijklmno"),error=>error.status===413);posterMode="fallback";
+  console.log("PASS: public Drive thumbnail, API fallback, private/HTML rejection, bounded image size and 30-minute inactivity boundary");
   const {requireAdmin,requireSameOrigin}=await import(pathToFileURL(path.join(directory,"server-auth.mjs")));
   async function token(overrides={},options={}){
     return new SignJWT({email:"anuj8160507@gmail.com",email_verified:true,firebase:{sign_in_provider:"password"},...overrides}).setProtectedHeader({alg:"RS256",kid:"test-key"}).setSubject("admin-test-uid").setIssuedAt().setIssuer("https://securetoken.google.com/movies-788c7").setAudience(options.audience||"movies-788c7").setExpirationTime(options.expiration||"5m").sign(privateKey);
@@ -108,17 +139,20 @@ try{
   }else{
     assert.equal((await handleApiRequest(api("/api/movies","POST",valid))).status,404);
     assert.equal((await handleApiRequest(api("/api/stats"))).status,404);
-    const visit=await handleApiRequest(api("/api/visit","POST",undefined,false,{"User-Agent":"BrowserTest"}));
+    const eventId=crypto.randomUUID(),before=(await store.stats()).total;
+    const visit=await handleApiRequest(api("/api/visit","POST",{eventId},false,{"User-Agent":"BrowserTest",Cookie:"mfy_visit=old-browser-session"}));
     assert.equal(visit.status,204);
-    const cookie=visit.headers.get("set-cookie");assert.match(cookie,/HttpOnly/);
-    const before=(await store.stats()).total;
-    assert.equal((await handleApiRequest(api("/api/visit","POST",undefined,false,{"User-Agent":"BrowserTest",Cookie:cookie.split(";")[0]}))).status,204);
-    assert.equal((await store.stats()).total,before);
+    assert.equal(visit.headers.get("set-cookie"),null);assert.equal((await store.stats()).total,before+1);
+    assert.equal((await handleApiRequest(api("/api/visit","POST",{eventId},false,{"User-Agent":"BrowserTest"}))).status,204);
+    assert.equal((await store.stats()).total,before+1);
+    assert.equal((await handleApiRequest(api("/api/visit","POST",{eventId:crypto.randomUUID()},false,{"User-Agent":"BrowserTest",Cookie:"mfy_visit=old-browser-session"}))).status,204);
+    assert.equal((await store.stats()).total,before+2);
+    assert.equal((await handleApiRequest(api("/api/visit","POST",{eventId:"bad-id"},false,{"User-Agent":"BrowserTest"}))).status,400);
   }
   assert.equal((await handleApiRequest(api("/api/poster/"+visible,"GET",undefined,false))).status,200);
   await store.updateMovie(visible,{...valid,published:0});
   assert.equal((await handleApiRequest(api("/api/poster/"+visible,"GET",undefined,false))).status,401);
-  console.log("PASS: "+config.role+" API routes, token enforcement, origin protection, request validation, poster authorization and session cookie");
+  console.log("PASS: "+config.role+" API routes, token enforcement, origin protection, request validation, poster authorization and per-page counting with retry deduplication");
   const vercel=JSON.parse(readFileSync("vercel.json","utf8"));assert.equal(vercel.framework,null);assert.equal(vercel.outputDirectory,"dist/public");
   for(const file of readdirSync("dist/public").filter(name=>name.endsWith(".js"))){
     const source=readFileSync("dist/public/"+file,"utf8");

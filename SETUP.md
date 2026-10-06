@@ -18,7 +18,7 @@ Reference: https://firebase.google.com/docs/auth/web/password-auth
 
 ## 2. Prepare Firestore and its server credentials
 
-Use the Firestore Standard edition default database in the existing project. If it already exists, keep it. Keep the deny-all rules from firestore.rules: the browser does not access Firestore directly. The backend uses the Firebase Admin SDK and verifies admin identity before protected operations.
+Use the Firestore Standard edition default database in the existing project. If it already exists, keep it. IMPORTANT: replace the earlier deny-all rules with the complete contents of firestore.rules, then click Publish. Live snapshots require this change. Visitors may read only published movies; the verified password admin may read all movies and the analytics summary. Browser writes and all other reads remain denied. The backend uses the Firebase Admin SDK and verifies admin identity before protected operations.
 
 Open Firebase > Project settings > Service accounts > Generate new private key. Keep the downloaded JSON outside both repositories. In both Vercel projects, add the following server environment variable:
 
@@ -26,7 +26,7 @@ FIREBASE_SERVICE_ACCOUNT_JSON = the complete contents of that JSON file
 
 Select Production, and Preview too if you intend to use preview deployments. The key must belong to movies-788c7. Do not prefix this variable with VITE_ or NEXT_PUBLIC_. Do not paste the key into frontend code or GitHub.
 
-The service account must have access to Firestore. The API creates movies, metadata/catalog, analytics/summary, daily_visits and visit_sessions as needed; no manual collection creation is required. Public reads expose only published movie records. Catalog create/delete and visit counting use Firestore transactions. The public movie list may be cached for up to 30 seconds; admin responses are not cached. Statistics retain total visits and show the last 30 days; old session records are pruned in bounded batches when the admin refreshes statistics.
+The service account must have access to Firestore. The API creates movies, metadata/catalog, analytics/summary, daily_visits and visit_sessions as needed; no manual collection creation is required. Movie changes appear through Firestore snapshots, with a 10-second API fallback when snapshots are unavailable. Catalog JSON and admin responses are not cached. The counter measures page views: every load, refresh, new tab and browser-back restoration creates a new event ID; retries use the same ID and count once. Historical counts are preserved. Known bots are filtered. Daily totals use Asia/Kolkata, and averages include zero-visit days. Stats refresh after summary changes, every 15 seconds while visible, on focus and on manual Refresh. Old event records remain stored for retry deduplication; no paid TTL service is enabled. Network failures, browser blocking and free-tier limits can prevent recording, so this is a page-view counter rather than a guarantee of exact visitor identity.
 
 References: https://firebase.google.com/docs/admin/setup and https://firebase.google.com/docs/firestore/security/get-started
 
@@ -46,7 +46,7 @@ GOOGLE_DRIVE_CLIENT_ID = that Web application's client ID
 
 This client ID is public browser configuration, not a client secret. The app checks that Drive belongs to anuj8160507@gmail.com. Drive access tokens stay in memory and expire. An absent client ID does not prevent login or using a manually uploaded, publicly shared Drive image link.
 
-Poster downloads use GOOGLE_DRIVE_API_KEY when set, otherwise the existing Firebase web API key. In both Vercel projects, set GOOGLE_DRIVE_API_KEY to a server-compatible Google API key restricted to Google Drive API if your existing Firebase key blocks Drive or uses website-referrer restrictions. Retain restrictions on the existing browser key. This server key is not included in browser JavaScript.
+Poster downloads first try Drive's public thumbnail URL, then the Drive API and a public download URL. The thumbnail and public download paths are best-effort fallbacks and may be blocked by Google. Only supported image responses up to 4 MB are accepted; HTML/login pages are rejected. Public sharing is still required. The API path uses GOOGLE_DRIVE_API_KEY when set, otherwise the existing Firebase web API key. Set a server-compatible key restricted to Google Drive API in both Vercel projects if the API fallback needs it. Retain restrictions on the browser key. This server key is not included in browser JavaScript. Uploaded posters are compressed, stored in Movies for You - Posters, then shared as Anyone with the link - Viewer. Connect Drive from Add movie using the admin Google account. Drive tokens stay in memory, so reconnect after a reload or expiry. A private, deleted or wrong file cannot be repaired by the public website: correct sharing/link in Drive or replace the movie's poster. The public card offers Retry poster after sharing is corrected.
 
 Reference: https://developers.google.com/identity/oauth2/web/guides/use-token-model
 
@@ -90,6 +90,8 @@ If these GitHub repositories are already connected to Vercel, a push can trigger
 ## 6. Final live check
 
 Log in with the prefilled email and your password. If requested, verify the email once. Add a movie using a public Drive link or Connect Google Drive, publish it and check its poster, search match and Watch link on the public site. Verify hide/edit/delete and statistics. Real Firebase login, Firestore access and Drive upload remain dependent on your account configuration and need this live check.
+
+Admin authentication now uses session storage: a reload preserves login without flashing the login form, while closing the tab ends its session. An inactivity timer signs out after 30 minutes, clearing Drive tokens and unsaved editor data. Pointer, keyboard and scroll activity reset the timer; automatic stats updates do not. A tab returning from sleep checks expiry before allowing continued use. Sessions and activity timestamps are preserved through reloads. Live account sessions still need to be checked after deployment.
 
 Do not enable public Firestore writes, commit passwords or service-account files, request full Drive access, or enable paid Firebase Storage/Cloud Functions for this app. Images remain in Google Drive. Firestore and hosting quotas still apply.
 
