@@ -95,6 +95,12 @@ Admin authentication now uses session storage: a reload preserves login without 
 
 Do not enable public Firestore writes, commit passwords or service-account files, request full Drive access, or enable paid Firebase Storage/Cloud Functions for this app. Images remain in Google Drive. Firestore and hosting quotas still apply.
 
+## Public advertising
+
+The owner-supplied aarems.org script loads globally once, one second after the public page mounts. It has no inline container, so its placement and behavior are controlled by the provider. The owner-supplied bancadeltempoidea.org native script loads into its matching container in a labelled Advertisement placement below movie search when that area approaches the viewport. Both load asynchronously and retain data-cfasync=false. Search, snapshots and stats updates do not reload ad scripts. A native script download error hides its empty placement. Actual creatives, ad fill, category settings and revenue are controlled by the publisher account and provider; local browser checks mock these scripts and do not prove live delivery. No ad scripts are included in the admin application.
+
+After deploying the public project, check real ad behavior on a phone, confirm the configured publisher formats and check that Watch links remain usable. Source URLs and IDs live in lib/ad-config.ts. Changing publisher configuration or replacing source URLs requires a new public build. The ad-provider privacy link is shown next to the placement.
+
 ## Local development
 
 Copy .env.example to .env in each project and supply the server credential. Add GOOGLE_DRIVE_CLIENT_ID and MOVIES_PUBLIC_URL in the admin project as needed. Start with npm run dev. The public preview uses 127.0.0.1:5173 and the admin uses 127.0.0.1:5174. These local processes never publish.
